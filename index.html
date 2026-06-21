@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Markdown Editor — Live Preview</title>
+<style>
+  :root {
+    --bg: #ffffff; --fg: #1f2328; --muted: #656d76; --border: #d0d7de;
+    --panel: #f6f8fa; --accent: #0969da; --code-bg: #f6f8fa;
+  }
+  html[data-theme="dark"] {
+    --bg: #0d1117; --fg: #e6edf3; --muted: #8b949e; --border: #30363d;
+    --panel: #161b22; --accent: #58a6ff; --code-bg: #161b22;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; height: 100vh; display: flex; flex-direction: column;
+    font-family: -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg); color: var(--fg);
+  }
+  header {
+    display: flex; align-items: center; gap: .5rem; flex-wrap: wrap;
+    padding: .5rem .75rem; border-bottom: 1px solid var(--border); background: var(--panel);
+  }
+  header h1 { font-size: 1rem; margin: 0 .75rem 0 0; }
+  .toolbar { display: flex; gap: .25rem; flex-wrap: wrap; }
+  button {
+    font: inherit; cursor: pointer; padding: .35rem .6rem; border-radius: 6px;
+    border: 1px solid var(--border); background: var(--bg); color: var(--fg);
+  }
+  button:hover { border-color: var(--accent); color: var(--accent); }
+  .spacer { flex: 1; }
+  .status { color: var(--muted); font-size: .8rem; }
+  main { flex: 1; display: grid; grid-template-columns: 1fr 1fr; min-height: 0; }
+  textarea {
+    border: none; resize: none; padding: 1rem; font-size: .95rem; line-height: 1.5;
+    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    background: var(--bg); color: var(--fg); outline: none;
+    border-right: 1px solid var(--border);
+  }
+  #preview { padding: 1rem 1.5rem; overflow: auto; }
+  #preview h1, #preview h2 { border-bottom: 1px solid var(--border); padding-bottom: .3em; }
+  #preview pre {
+    background: var(--code-bg); padding: 1rem; border-radius: 8px; overflow: auto;
+    border: 1px solid var(--border);
+  }
+  #preview code { background: var(--code-bg); padding: .15em .35em; border-radius: 4px; font-size: .9em; }
+  #preview pre code { background: none; padding: 0; }
+  #preview blockquote {
+    margin: 0; padding: 0 1em; color: var(--muted); border-left: .25em solid var(--border);
+  }
+  #preview a { color: var(--accent); }
+  #preview img { max-width: 100%; }
+  #preview hr { border: none; border-top: 1px solid var(--border); }
+  @media (max-width: 720px) { main { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; } textarea { border-right: none; border-bottom: 1px solid var(--border); } }
+</style>
+</head>
+<body>
+  <header>
+    <h1>📝 Markdown Editor</h1>
+    <div class="toolbar">
+      <button data-wrap="**" title="Bold (Ctrl+B)"><b>B</b></button>
+      <button data-wrap="*" title="Italic (Ctrl+I)"><i>I</i></button>
+      <button data-prefix="# " title="Heading">H</button>
+      <button data-wrap="`" title="Inline code">&lt;/&gt;</button>
+      <button data-prefix="- " title="List">•</button>
+      <button data-prefix="> " title="Quote">❝</button>
+      <button id="linkBtn" title="Link">🔗</button>
+    </div>
+    <div class="spacer"></div>
+    <span class="status" id="status">0 words · 0 chars</span>
+    <button id="themeBtn" title="Toggle theme">🌓</button>
+    <button id="exportMd">Export .md</button>
+    <button id="exportHtml">Export .html</button>
+  </header>
+  <main>
+    <textarea id="editor" spellcheck="false" placeholder="Write Markdown here…"></textarea>
+    <div id="preview"></div>
+  </main>
+
+  <script src="parser.js"></script>
+  <script>
+    const editor = document.getElementById('editor');
+    const preview = document.getElementById('preview');
+    const status = document.getElementById('status');
+    const STORAGE_KEY = 'markdown-editor:content';
+    const THEME_KEY = 'markdown-editor:theme';
+
+    const SAMPLE = [
+      '# Welcome 👋',
+      '',
+      'This is a **live Markdown editor** with a hand-written parser.',
+      '',
+      '## Features',
+      '- Real-time preview',
+      '- Autosave to your browser',
+      '- Export to `.md` or `.html`',
+      '',
+      '> Type on the left, see HTML on the right.',
+      '',
+      '```js',
+      'console.log("hello world");',
+      '```',
+      '',
+      'Made by [Gianluca](https://github.com/w1kicartel).'
+    ].join('\n');
+
+    /** Re-render preview + update word/char counters. */
+    function update() {
+      preview.innerHTML = MD.render(editor.value);
+      const words = (editor.value.match(/\S+/g) || []).length;
+      status.textContent = words + ' words · ' + editor.value.length + ' chars';
+      try { localStorage.setItem(STORAGE_KEY, editor.value); } catch (e) {}
+    }
+
+    /** Wrap or prefix the current selection — powers the toolbar buttons. */
+    function wrapSelection(token) {
+      const s = editor.selectionStart, e = editor.selectionEnd;
+      const sel = editor.value.slice(s, e) || 'text';
+      editor.setRangeText(token + sel + token, s, e, 'end');
+      editor.focus(); update();
+    }
+    function prefixLine(token) {
+      const s = editor.selectionStart;
+      const lineStart = editor.value.lastIndexOf('\n', s - 1) + 1;
+      editor.setRangeText(token, lineStart, lineStart, 'end');
+      editor.focus(); update();
+    }
+
+    document.querySelectorAll('[data-wrap]').forEach(b =>
+      b.addEventListener('click', () => wrapSelection(b.dataset.wrap)));
+    document.querySelectorAll('[data-prefix]').forEach(b =>
+      b.addEventListener('click', () => prefixLine(b.dataset.prefix)));
+
+    document.getElementById('linkBtn').addEventListener('click', () => {
+      const url = prompt('Link URL:', 'https://');
+      if (!url) return;
+      const s = editor.selectionStart, e = editor.selectionEnd;
+      const label = editor.value.slice(s, e) || 'link';
+      editor.setRangeText('[' + label + '](' + url + ')', s, e, 'end');
+      editor.focus(); update();
+    });
+
+    // Keyboard shortcuts.
+    editor.addEventListener('keydown', (ev) => {
+      if (ev.ctrlKey || ev.metaKey) {
+        if (ev.key === 'b') { ev.preventDefault(); wrapSelection('**'); }
+        if (ev.key === 'i') { ev.preventDefault(); wrapSelection('*'); }
+      }
+    });
+
+    // Export helpers.
+    function download(filename, text, type) {
+      const blob = new Blob([text], { type });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    }
+    document.getElementById('exportMd').addEventListener('click', () =>
+      download('document.md', editor.value, 'text/markdown'));
+    document.getElementById('exportHtml').addEventListener('click', () => {
+      const html = '<!DOCTYPE html><meta charset="utf-8"><title>Document</title>\n' + MD.render(editor.value);
+      download('document.html', html, 'text/html');
+    });
+
+    // Theme toggle (persisted).
+    const themeBtn = document.getElementById('themeBtn');
+    function applyTheme(t) { document.documentElement.dataset.theme = t; }
+    themeBtn.addEventListener('click', () => {
+      const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+      applyTheme(next);
+      try { localStorage.setItem(THEME_KEY, next); } catch (e) {}
+    });
+
+    // Init.
+    let saved = '';
+    try { saved = localStorage.getItem(STORAGE_KEY); } catch (e) {}
+    editor.value = saved || SAMPLE;
+    try { applyTheme(localStorage.getItem(THEME_KEY) || 'light'); } catch (e) {}
+    editor.addEventListener('input', update);
+    update();
+  </script>
+</body>
+</html>
